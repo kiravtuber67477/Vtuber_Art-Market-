@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>VTuber Art Market</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #0B0E17; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+
+/**
+ * VTuber Art Market — Telegram Mini App demo
+ * Frontend-only prototype with mock data & in-memory state.
+ * Real payments (Telegram Stars / TON) & file protection are implemented
+ * in the accompanying backend/server.js reference file.
+ */
+
+const FONT_IMPORT = `
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+`;
+
+const ARTISTS = [
+  { id: "a1", name: "Mira_draws", live: true, avatarHue: 280 },
+  { id: "a2", name: "kanpeki.ink", live: false, avatarHue: 190 },
+  { id: "a3", name: "nyoro_art", live: true, avatarHue: 40 },
+];
+
+const SEED_PRODUCTS = [
+  { id: "p1", artist: ARTISTS[0], title: "Neon Alter — Live2D emote pack", cat: "Emote pack", priceStars: 250, priceTon: 3.2, hue: 280 },
+  { id: "p2", artist: ARTISTS[1], title: "Sticker set — daily mood", cat: "Sticker", priceStars: 60, priceTon: 0.8, hue: 190 },
+  { id: "p3", artist: ARTISTS[2], title: "Debut model rig — chibi style", cat: "Model", priceStars: 1800, priceTon: 22, hue: 40 },
+  { id: "p4", artist: ARTISTS[0], title: "Overlay frame — 'Aurora' stream", cat: "Overlay", priceStars: 140, priceTon: 1.9, hue: 280 },
+];
+
+function ProtectedPreview({ hue, unlocked }) {
+  // Visual deterrent only: tiled shifting watermark + heavy blur pre-purchase.
+  // This is a UX signal, not a real anti-screenshot mechanism — see README.
+  const tiles = Array.from({ length: 9 });
+  return (
+    <div
+      style={{
+        position: "relative",
+        borderRadius: 14,
+        overflow: "hidden",
+        aspectRatio: "4 / 3",
+        background: `linear-gradient(135deg, hsl(${hue} 70% 22%), hsl(${hue + 40} 60% 12%))`,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          filter: unlocked ? "none" : "blur(14px) saturate(1.1)",
+          background: `radial-gradient(circle at 30% 30%, hsl(${hue} 90% 55% / 0.55), transparent 60%),
+                       radial-gradient(circle at 70% 70%, hsl(${hue + 60} 85% 50% / 0.4), transparent 55%)`,
+        }}
+      />
+      {!unlocked && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateRows: "repeat(3, 1fr)",
+            pointerEvents: "none",
+          }}
+        >
+          {tiles.map((_, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transform: `rotate(-18deg) translate(${(i % 3) * 2}px, ${Math.floor(i / 3) * 2}px)`,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                letterSpacing: 1,
+                color: "rgba(237,234,245,0.16)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              PREVIEW · @{"session"}
+            </div>
+          ))}
+        </div>
+      )}
+      {!unlocked && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 8,
+            left: 8,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 10,
+            color: "#8B8798",
+            background: "rgba(11,14,23,0.6)",
+            padding: "3px 7px",
+            borderRadius: 6,
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          locked · buy to unlock
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveDot({ live }) {
+  if (!live) return null;
+  return (
+    <span style={{ position: "relative", display: "inline-flex", width: 8, height: 8 }}>
+      <span
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "50%",
+          background: "#F3C34B",
+          animation: "pulse 1.8s ease-out infinite",
+        }}
+      />
+      <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "#F3C34B" }} />
+    </span>
+  );
+}
+
+function Tag({ children }) {
+  return (
+    <span
+      style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 10,
+        color: "#4BE3F3",
+        border: "1px solid rgba(75,227,243,0.35)",
+        borderRadius: 999,
+        padding: "3px 8px",
+        letterSpacing: 0.3,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ProductCard({ p, onOpen }) {
+  return (
+    <div
+      onClick={() => onOpen(p)}
+      style={{
+        background: "#141827",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: 18,
+        padding: 12,
+        cursor: "pointer",
+        transition: "transform 0.15s ease, border-color 0.15s ease",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(178,75,243,0.45)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)")}
+    >
+      <ProtectedPreview hue={p.hue} unlocked={false} />
+      <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#EDEAF5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {p.title}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <LiveDot live={p.artist.live} />
+            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: "#8B8798" }}>{p.artist.name}</span>
+          </div>
+        </div>
+        <Tag>{p.cat}</Tag>
+      </div>
+      <div style={{ marginTop: 10, display: "flex", gap: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
+        <span style={{ color: "#F3C34B" }}>★ {p.priceStars}</span>
+        <span style={{ color: "#4BE3F3" }}>◇ {p.priceTon} TON</span>
+      </div>
+    </div>
+  );
+}
+
+function ProductModal({ p, onClose }) {
+  const [method, setMethod] = useState("stars");
+  const [status, setStatus] = useState("idle"); // idle | paying | paid
+
+  if (!p) return null;
+
+  const pay = () => {
+    setStatus("paying");
+    // Demo only — real flow calls backend to create a Telegram Stars invoice
+    // (Bot API `createInvoiceLink` / WebApp.openInvoice) or a TON Connect tx.
+    setTimeout(() => setStatus("paid"), 1100);
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(6,7,12,0.72)",
+        display: "flex",
+        alignItems: "flex-end",
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          background: "#0F1220",
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
+          padding: 18,
+          borderTop: "1px solid rgba(178,75,243,0.3)",
+        }}
+      >
+        <div style={{ width: 36, height: 4, background: "#2A2E40", borderRadius: 99, margin: "0 auto 14px" }} />
+        <ProtectedPreview hue={p.hue} unlocked={status === "paid"} />
+        <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 17, color: "#EDEAF5", marginTop: 12 }}>
+          {p.title}
+        </div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#8B8798", marginTop: 2 }}>
+          {p.artist.name} by · {p.cat}
+        </div>
+
+        {status !== "paid" ? (
+          <>
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              {[
+                { key: "stars", label: `★ ${p.priceStars} Stars` },
+                { key: "ton", label: `◇ ${p.priceTon} TON` },
+                { key: "btc", label: "₿ BTC" },
+              ].map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setMethod(m.key)}
+                  style={{
+                    flex: 1,
+                    padding: "10px 6px",
+                    borderRadius: 12,
+                    border: method === m.key ? "1px solid #B24BF3" : "1px solid rgba(255,255,255,0.08)",
+                    background: method === m.key ? "rgba(178,75,243,0.14)" : "transparent",
+                    color: "#EDEAF5",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 11,
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={pay}
+              disabled={status === "paying"}
+              style={{
+                width: "100%",
+                marginTop: 14,
+                padding: "13px 0",
+                borderRadius: 14,
+                border: "none",
+                background: "linear-gradient(90deg, #B24BF3, #4BE3F3)",
+                color: "#0B0E17",
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              {status === "paying" ? "Checking payment…" : "Buy now"}
+            </button>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: "#5C5A6B", marginTop: 8, textAlign: "center" }}>
+              Once payment is confirmed, the file is linked only to your account
+            </div>
+          </>
+        ) : (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 14,
+              background: "rgba(75,227,243,0.08)",
+              border: "1px solid rgba(75,227,243,0.3)",
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              color: "#EDEAF5",
+              textAlign: "center",
+            }}
+          >
+            ✓ Purchased — the file is in your "Purchases" tab
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArtistPanel() {
+  const [uploads, setUploads] = useState([
+    { id: "u1", title: "Neon Alter — Live2D emote pack", sales: 34, earnedStars: 8500 },
+    { id: "u2", title: "Overlay frame — 'Aurora' stream", sales: 12, earnedStars: 1680 },
+  ]);
+  const [title, setTitle] = useState("");
+  const [price, setPrice] = useState("");
+
+  const addUpload = () => {
+    if (!title.trim() || !price) return;
+    setUploads([{ id: `u${Date.now()}`, title, sales: 0, earnedStars: 0 }, ...uploads]);
+    setTitle("");
+    setPrice("");
+  };
+
+  return (
+    <div style={{ padding: "4px 16px 90px" }}>
+      <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 18, color: "#EDEAF5", marginBottom: 4 }}>
+        Artist panel
+      </div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, color: "#8B8798", marginBottom: 16 }}>
+        Upload your work, set a price — protection is applied automatically
+      </div>
+
+      <div style={{ background: "#141827", borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{
+          border: "1.5px dashed rgba(178,75,243,0.4)",
+          borderRadius: 12,
+          padding: "22px 10px",
+          textAlign: "center",
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 12,
+          color: "#8B8798",
+          marginBottom: 10,
+        }}>
+          Tap to select a file (PNG, PSD, ZIP, MP4)
+        </div>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Title (e.g. Live2D emote pack)"
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.08)",
+            background: "#0F1220",
+            color: "#EDEAF5",
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 13,
+            marginBottom: 8,
+          }}
+        />
+        <input
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          placeholder="Price (Stars)"
+          type="number"
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.08)",
+            background: "#0F1220",
+            color: "#EDEAF5",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 13,
+            marginBottom: 12,
+          }}
+        />
+        <button
+          onClick={addUpload}
+          style={{
+            width: "100%",
+            padding: "12px 0",
+            borderRadius: 12,
+            border: "none",
+            background: "linear-gradient(90deg, #B24BF3, #4BE3F3)",
+            color: "#0B0E17",
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          Add to store
+        </button>
+      </div>
+
+      <div style={{ marginTop: 20, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: 14, color: "#EDEAF5" }}>
+        My uploads
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+        {uploads.map((u) => (
+          <div
+            key={u.id}
+            style={{
+              background: "#141827",
+              border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: 14,
+              padding: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#EDEAF5", maxWidth: "60%" }}>{u.title}</div>
+            <div style={{ textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+              <div style={{ color: "#8B8798" }}>{u.sales} sold</div>
+              <div style={{ color: "#F3C34B" }}>★ {u.earnedStars}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmailGate({ onVerified }) {
+  const [step, setStep] = useState("email"); // email | code
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+  const sendCode = () => {
+    if (!isValidEmail(email)) {
+      setError("Email format is invalid");
+      return;
+    }
+    setError("");
+    setBusy(true);
+    // Demo only — real flow calls POST /api/account/email/start
+    setTimeout(() => {
+      setBusy(false);
+      setStep("code");
+    }, 900);
+  };
+
+  const confirmCode = () => {
+    if (code.trim().length !== 6) {
+      setError("Enter the full 6-digit code");
+      return;
+    }
+    setError("");
+    setBusy(true);
+    // Demo only — real flow calls POST /api/account/email/confirm
+    setTimeout(() => {
+      setBusy(false);
+      onVerified(email);
+    }, 900);
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#0B0E17",
+        color: "#EDEAF5",
+        fontFamily: "'Inter', sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        padding: "24px 22px",
+      }}
+    >
+      <style>{FONT_IMPORT}</style>
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: 16,
+          background: "linear-gradient(135deg, #B24BF3, #4BE3F3)",
+          marginBottom: 20,
+        }}
+      />
+      <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 22 }}>
+        {step === "email" ? "Verify your email" : "Enter the code"}
+      </div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "#8B8798", marginTop: 6, lineHeight: 1.5 }}>
+        {step === "email"
+          ? "You need to link your account for purchases and payments. This is only asked once."
+          : `${email} — we sent a 6-digit code. Enter it below.`}
+      </div>
+
+      <div style={{ marginTop: 22 }}>
+        {step === "email" ? (
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="email@example.com"
+            type="email"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "13px 14px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "#141827",
+              color: "#EDEAF5",
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 14,
+            }}
+          />
+        ) : (
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="000000"
+            inputMode="numeric"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "13px 14px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "#141827",
+              color: "#EDEAF5",
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 20,
+              letterSpacing: 6,
+              textAlign: "center",
+            }}
+          />
+        )}
+
+        {error && (
+          <div style={{ color: "#F36B6B", fontSize: 12, marginTop: 8, fontFamily: "'Inter', sans-serif" }}>{error}</div>
+        )}
+
+        <button
+          onClick={step === "email" ? sendCode : confirmCode}
+          disabled={busy}
+          style={{
+            width: "100%",
+            marginTop: 14,
+            padding: "13px 0",
+            borderRadius: 14,
+            border: "none",
+            background: "linear-gradient(90deg, #B24BF3, #4BE3F3)",
+            color: "#0B0E17",
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            opacity: busy ? 0.7 : 1,
+          }}
+        >
+          {busy ? "Sending…" : step === "email" ? "Send code" : "Confirm"}
+        </button>
+
+        {step === "code" && (
+          <button
+            onClick={() => setStep("email")}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              padding: "10px 0",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.08)",
+              background: "transparent",
+              color: "#8B8798",
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            Change email
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [tab, setTab] = useState("market");
+  const [openProduct, setOpenProduct] = useState(null);
+  const [verifiedEmail, setVerifiedEmail] = useState(null);
+
+  const products = useMemo(() => SEED_PRODUCTS, []);
+
+  if (!verifiedEmail) {
+    return <EmailGate onVerified={setVerifiedEmail} />;
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#0B0E17",
+        color: "#EDEAF5",
+        fontFamily: "'Inter', sans-serif",
+      }}
+    >
+      <style>{FONT_IMPORT}</style>
+      <style>{`
+        @keyframes pulse {
+          0% { transform: scale(1); opacity: 0.9; }
+          70% { transform: scale(2.6); opacity: 0; }
+          100% { opacity: 0; }
+        }
+      `}</style>
+
+      <div style={{ padding: "18px 16px 6px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 20, letterSpacing: -0.3 }}>
+            VTuber Art Market
+          </div>
+          <div style={{ fontSize: 11, color: "#8B8798", marginTop: 2 }}>Community · 4,210 artists</div>
+        </div>
+        <div
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #B24BF3, #4BE3F3)",
+          }}
+        />
+      </div>
+
+      {tab === "market" && (
+        <div style={{ padding: "12px 16px 90px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {products.map((p) => (
+            <ProductCard key={p.id} p={p} onOpen={setOpenProduct} />
+          ))}
+        </div>
+      )}
+
+      {tab === "panel" && <ArtistPanel />}
+
+      {tab === "profile" && (
+        <div style={{ padding: "12px 16px 90px" }}>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 18 }}>Profile</div>
+          <div style={{ marginTop: 14, background: "#141827", borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 13, color: "#8B8798" }}>Verified email</div>
+            <div style={{ marginTop: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>{verifiedEmail}</div>
+          </div>
+          <div style={{ marginTop: 10, background: "#141827", borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 13, color: "#8B8798" }}>Subscription status</div>
+            <div style={{ marginTop: 6, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, color: "#F3C34B" }}>
+              Active · 12 days left
+            </div>
+          </div>
+          <div style={{ marginTop: 10, background: "#141827", borderRadius: 16, padding: 14, border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 13, color: "#8B8798" }}>My purchases</div>
+            <div style={{ marginTop: 6, fontSize: 13 }}>No purchases yet</div>
+          </div>
+        </div>
+      )}
+
+      <ProductModal p={openProduct} onClose={() => setOpenProduct(null)} />
+
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "#0F1220",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+          display: "flex",
+          padding: "8px 10px calc(8px + env(safe-area-inset-bottom))",
+        }}
+      >
+        {[
+          { key: "market", label: "Market" },
+          { key: "panel", label: "Panel" },
+          { key: "profile", label: "Profile" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              flex: 1,
+              background: "none",
+              border: "none",
+              padding: "8px 0",
+              color: tab === t.key ? "#EDEAF5" : "#5C5A6B",
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: "pointer",
+              borderRadius: 10,
+              background: tab === t.key ? "rgba(178,75,243,0.12)" : "transparent",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+if (window.Telegram && window.Telegram.WebApp) {
+  window.Telegram.WebApp.ready();
+  window.Telegram.WebApp.expand();
+}
+</script>
+</body>
+</html>
